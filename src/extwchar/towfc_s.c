@@ -34,15 +34,35 @@
 #include <ctype.h>
 #include <wctype.h>
 
+extern wchar_t _towcase(wchar_t wc, int lower);
+
+/**
+ * @brief
+ *    \c iswfc() checks the uppercase character for a mapping to lowercase,
+ *    returning the number of new wide character codepoints needed.
+ *    The usual \c iswupper(wc) case returns 1, and the special 104 full folding
+ *    cases as specified in Unicode 10.0 \c CaseFolding.txt return either 2 or 3.
+ *
+ * @param[in]   wc  unicode character codepoint
+ *
+ * @retval  0   when there is no corresponding lowercase mapping.
+ * @retval  1   when there is a corresponding common or simple lowercase mapping.
+ * @retval  2   a full case folding expands to 2 characters
+ * @retval  3   a full case folding expands to 3 characters
+ *
+ * @see
+ *    towfc_s(), wcsfc_s(), towupper()
+ */
+
 /* Unicode 10.0 */
 
-/* created via test_towfc_s() ignore_f = 0 */
+/* created via test_towfc_s() */
 static const struct {
     unsigned short upper;
     unsigned short lower1;
     unsigned short lower2;
 } tbl2[] = {
-    { 0x00DF, 0x0073,0x0073 },	/* LATIN SMALL LETTER SHARP S */
+    { 0x00DF, 0x0073,0x0073 },	/* LATIN SMALL LETTER SHARP S => ss */
     { 0x0130, 0x0069,0x0307 },	/* LATIN CAPITAL LETTER I WITH DOT ABOVE */
     { 0x0149, 0x02BC,0x006E },	/* LATIN SMALL LETTER N PRECEDED BY APOSTROPHE */
     { 0x01F0, 0x006A,0x030C },	/* LATIN SMALL LETTER J WITH CARON */
@@ -52,7 +72,7 @@ static const struct {
     { 0x1E98, 0x0077,0x030A },	/* LATIN SMALL LETTER W WITH RING ABOVE */
     { 0x1E99, 0x0079,0x030A },	/* LATIN SMALL LETTER Y WITH RING ABOVE */
     { 0x1E9A, 0x0061,0x02BE },	/* LATIN SMALL LETTER A WITH RIGHT HALF RING */
-    { 0x1E9E, 0x0073,0x0073 },	/* LATIN CAPITAL LETTER SHARP S */
+    { 0x1E9E, 0x0073,0x0073 },	/* LATIN CAPITAL LETTER SHARP S => ss */
     { 0x1F50, 0x03C5,0x0313 },	/* GREEK SMALL LETTER UPSILON WITH PSILI */
     { 0x1F80, 0x1F00,0x03B9 },	/* GREEK SMALL LETTER ALPHA WITH PSILI AND YPOGEGRAMMENI */
     { 0x1F81, 0x1F01,0x03B9 },	/* GREEK SMALL LETTER ALPHA WITH DASIA AND YPOGEGRAMMENI */
@@ -155,11 +175,14 @@ static const struct {
     { 0x1FF7, 0x03C9,0x0342,0x03B9 },	/* GREEK SMALL LETTER OMEGA WITH PERISPOMENI AND YPOGEGRAMMENI */
     { 0xFB03, 0x0066,0x0066,0x0069 },	/* LATIN SMALL LIGATURE FFI */
     { 0xFB04, 0x0066,0x0066,0x006C },	/* LATIN SMALL LIGATURE FFL */
-    { 0, 0,0,0, }
+    { 0, 0,0,0 }
 };
 
-/* return the number of wide lower-case characters needed to foldcase
-   the given uppercase character. */
+/* Return the number of wide lower-case characters needed to full fold-case
+   the given uppercase character. Returns 0, 1, 2 or 3.
+   0 if the charcater stays the same, 1 if one character changes,
+   2 or 3 if the character will be replaced with 2 or 3.
+*/
 int
 iswfc(wint_t wc)
 {
@@ -168,7 +191,7 @@ iswfc(wint_t wc)
                (wc > 0x0587 && wc < 0x1e96) ||
                (wc > 0x1FFC && wc < 0xFB00) ||
                (wc > 0xFB17) ))
-        return 0;
+        goto single;
     if (wc < 0x1e96) {
         if (wc == 0xdf ||
             wc == 0x130 ||
@@ -180,21 +203,24 @@ iswfc(wint_t wc)
                  wc == 0x3b0)
             return 3;
         else
-            return 0;
+            goto single;
     }
     if (wc <= 0x1e9a || wc == 0x1e9e || wc == 0x1f50)
         return 2;
     if (wc < 0x1f50)
-        return 0;
+        goto single;
     if (wc == 0x1f52 || wc == 0x1f54 || wc == 0x1f56)
         return 3;
     if (wc < 0x1f80)
-        return 0;
-    if (wc <= 0x1faf || (wc >= 0x1fb2 && wc < 0x1fb6))
-        return 2;
+        goto single;
+    if (wc <= 0x1faf || (wc >= 0x1fb2 && wc < 0x1fb6)) {
+        if (wc == 0x1fb5) goto single;
+        else return 2;
+    }
     if (wc == 0x1fb7 || wc == 0x1fc7 || wc == 0x1fd2 || wc == 0x1fd3 || wc == 0x1fd7 ||
         wc == 0x1fe2 || wc == 0x1fe3 || wc == 0x1fe7 || wc == 0x1ff7)
         return 3;
+    if (wc == 0x1fc5) goto single;
     if (wc == 0x1fb6 || wc == 0x1fbc ||
         (wc >= 0x1fc2 && wc <= 0x1fc6) ||
         wc == 0x1fcc ||
@@ -205,13 +231,48 @@ iswfc(wint_t wc)
         wc == 0x1ff6 ||
         wc == 0x1ffc)
         return 2;
-    if (wc < 0xfb00 || wc > 0xfb17)
-        return 0;
+    if (wc < 0xfb00 || wc > 0xfb17 || (wc > 0xfb06 && wc < 0xfb13))
+        goto single;
     if (wc == 0xfb03 || wc == 0xfb04)
         return 3;
     return 2;
+
+    if (0) {
+      single:
+        return iswupper(wc) ? 1 : 0;
+    }
 }
 
+/**
+ * @brief
+ *    \c towfc_s() converts a wide character to fully fold-cased (lowercased
+ *    with possible expansions), according to the Unicode 10.0 CaseFolding
+ *    table. Even in most the unsuccessul cases, just not with with ESNULLP
+ *    and ESZEROL dest is being written to.
+ *
+ * @param[out]  dest  wide string buffer to store result
+ * @param[in]   dmax  maximum size of dest, should be 4. (3 + NULL)
+ * @param[in]   src   wide character to convert to lowercase
+ *
+ * @pre  dest shall not be a null pointer.
+ * @pre  dmax shall be bigger than 3
+ * @pre  dmax shall not be greater than RSIZE_MAX_WSTR.
+ *
+ * @retval  EOK         on successful operation
+ * @retval  ESNULLP     when dest is NULL pointer
+ * @retval  ESZEROL     when dmax = 0
+ * @retval  ESLEMIN     when dmax < 4
+ * @retval  ESLEMAX     when dmax > RSIZE_MAX_WSTR
+ * @retval  ESNOTFND    when no mapping for src was found, iswfc is wrong
+ *
+ * @see
+ *    iswfc(), wcsfc_s(), towlower()
+ */
+
+/* Writes the fold-cased wide string to dest from the given uppercase wide
+   character. dmax should be 4 (3 wchar's + \0).
+   Returns EOK if replaced, or ESNOTFND if not replaced.
+*/
 errno_t
 towfc_s(wchar_t *restrict dest, rsize_t dmax, const wint_t src)
 {
@@ -238,21 +299,53 @@ towfc_s(wchar_t *restrict dest, rsize_t dmax, const wint_t src)
     }
 
     for (i=0; tbl2[i].upper; i++) {
-        if (src == tbl2[i].upper) {
+        if (tbl2[i].upper == src) {
             dest[0] = tbl2[i].lower1;
             dest[1] = tbl2[i].lower2;
             dest[2] = L'\0';
             return EOK;
         }
+        if (tbl2[i].upper > src)
+            break;
     }
     for (i=0; tbl3[i].upper; i++) {
-        if (src == tbl3[i].upper) {
+        if (tbl3[i].upper == src) {
             dest[0] = tbl3[i].lower1;
             dest[1] = tbl3[i].lower2;
-            dest[2] = tbl3[i].lower2;
+            dest[2] = tbl3[i].lower3;
             dest[3] = L'\0';
             return EOK;
         }
+        if (tbl3[i].upper > src)
+            break;
+    }
+
+    /* fc exceptions: not towlower */
+    if (unlikely(src >= 0x1c80 && src <= 0x1c88)) {
+        dest[1] = L'\0';
+        switch (src) {
+        case 0x1c80: dest[0] = 0x432; return EOK;
+        case 0x1c81: dest[0] = 0x434; return EOK;
+        case 0x1c82: dest[0] = 0x43e; return EOK;
+        case 0x1c83: dest[0] = 0x441; return EOK;
+        case 0x1c84: dest[0] = 0x442; return EOK;
+        case 0x1c85: dest[0] = 0x442; return EOK;
+        case 0x1c86: dest[0] = 0x44a; return EOK;
+        case 0x1c87: dest[0] = 0x463; return EOK;
+        case 0x1c88: dest[0] = 0xa64b; return EOK;
+        }
+    }
+    if (unlikely( (src >= 0xff21 && src <= 0xff3a) ||
+                  (src >= 0x10400 && src <= 0x104d3) ||
+                  (src >= 0x10c80 && src <= 0x10cb2) ||
+                  (src >= 0x118a0 && src <= 0x118bf) ||
+                  (src >= 0x118a0 && src <= 0x118bf) )) {
+        dest[0] = src + 0x20;
+        dest[1] = L'\0';
+    }
+    if (unlikely( src >= 0x1e900 && src <= 0x1e921 )) {
+        dest[0] = src + 0x22;
+        dest[1] = L'\0';
     }
 
     dest[0] = src < 128 ? tolower(src) : _towcase(src, 1);
